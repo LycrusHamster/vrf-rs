@@ -31,7 +31,6 @@ use std::{
 
 use failure::Fail;
 use hmac_sha256::HMAC;
-
 use openssl::{
     bn::{BigNum, BigNumContext},
     ec::{EcGroup, EcPoint, PointConversionForm},
@@ -488,6 +487,22 @@ impl VRF<&[u8], &[u8]> for ECVRF {
         let secret_key = BigNum::from_slice(x)?;
         let public_key_point = self.derive_public_key_point(&secret_key)?;
 
+        {
+            let mut y_point_x = BigNum::new().unwrap();
+            let mut y_point_y = BigNum::new().unwrap();
+            public_key_point
+                .as_ref()
+                .affine_coordinates(
+                    self.group.as_ref(),
+                    &mut y_point_x,
+                    &mut y_point_y,
+                    &mut self.bn_ctx,
+                )
+                .unwrap();
+            println!("Y-x: 0x{}", y_point_x.to_hex_str().unwrap().to_lowercase());
+            println!("Y-y: 0x{}", y_point_y.to_hex_str().unwrap().to_lowercase());
+        }
+
         // Step 2: Hash to curve
         let h_point = self.hash_to_try_and_increment(&public_key_point, alpha)?;
 
@@ -504,6 +519,11 @@ impl VRF<&[u8], &[u8]> for ECVRF {
 
         // Step 5: nonce
         let k = self.generate_nonce(&secret_key, &h_string)?;
+        println!("k: 0x{}", k.to_hex_str().unwrap().to_lowercase());
+
+        let mut k = k;
+        k.mul_word(2).unwrap();
+        println!("k: 0x{}", k.to_hex_str().unwrap().to_lowercase());
 
         // Step 6: c = hash points(...)
         let mut u_point = EcPoint::new(self.group.as_ref())?;
@@ -521,9 +541,34 @@ impl VRF<&[u8], &[u8]> for ECVRF {
             PointConversionForm::COMPRESSED,
             &mut self.bn_ctx,
         )?;
+        {
+            let mut gamma_point_x = BigNum::new().unwrap();
+            let mut gamma_point_y = BigNum::new().unwrap();
+            gamma_point
+                .as_ref()
+                .affine_coordinates(
+                    self.group.as_ref(),
+                    &mut gamma_point_x,
+                    &mut gamma_point_y,
+                    &mut self.bn_ctx,
+                )
+                .unwrap();
+            println!(
+                "Gamma-x: 0x{}",
+                gamma_point_x.to_hex_str().unwrap().to_lowercase()
+            );
+            println!(
+                "Gamma-y: 0x{}",
+                gamma_point_y.to_hex_str().unwrap().to_lowercase()
+            );
+        }
+
         // Fixed size; len(c) must be n and len(s)=2n
         let c_string = append_leading_zeros(&c.to_vec(), self.n);
+        println!("c: 0x{}", c.to_hex_str().unwrap().to_lowercase());
         let s_string = append_leading_zeros(&s.to_vec(), self.qlen);
+        println!("s: 0x{}", s.to_hex_str().unwrap().to_lowercase());
+
         // proof =  [Gamma_string||c_string||s_string]
         let proof = [&gamma_string[..], &c_string, &s_string].concat();
 
@@ -558,12 +603,69 @@ impl VRF<&[u8], &[u8]> for ECVRF {
         c_y.invert(&self.group, &self.bn_ctx)?;
         u_point.add(&self.group, &s_b, &c_y, &mut self.bn_ctx)?;
 
+        {
+            let mut u_point_x = BigNum::new().unwrap();
+            let mut u_point_y = BigNum::new().unwrap();
+            u_point
+                .as_ref()
+                .affine_coordinates(
+                    self.group.as_ref(),
+                    &mut u_point_x,
+                    &mut u_point_y,
+                    &mut self.bn_ctx,
+                )
+                .unwrap();
+            println!("u-x: 0x{}", u_point_x.to_hex_str().unwrap().to_lowercase());
+            println!("u-y: 0x{}", u_point_y.to_hex_str().unwrap().to_lowercase());
+        }
+
         // Step 4: V = sH -cGamma
         let mut s_h = EcPoint::new(self.group.as_ref())?;
         let mut c_gamma = EcPoint::new(self.group.as_ref())?;
         let mut v_point = EcPoint::new(self.group.as_ref())?;
         s_h.mul(&self.group, &h_point, &s, &self.bn_ctx)?;
         c_gamma.mul(&self.group, &gamma_point, &c, &self.bn_ctx)?;
+        {
+            let mut s_h_point_x = BigNum::new().unwrap();
+            let mut s_h_point_y = BigNum::new().unwrap();
+            s_h.as_ref()
+                .affine_coordinates(
+                    self.group.as_ref(),
+                    &mut s_h_point_x,
+                    &mut s_h_point_y,
+                    &mut self.bn_ctx,
+                )
+                .unwrap();
+            println!(
+                "s_H-x: 0x{}",
+                s_h_point_x.to_hex_str().unwrap().to_lowercase()
+            );
+            println!(
+                "s_H-y: 0x{}",
+                s_h_point_y.to_hex_str().unwrap().to_lowercase()
+            );
+
+            let mut c_gamma_point_x = BigNum::new().unwrap();
+            let mut c_gamma_point_y = BigNum::new().unwrap();
+            c_gamma
+                .as_ref()
+                .affine_coordinates(
+                    self.group.as_ref(),
+                    &mut c_gamma_point_x,
+                    &mut c_gamma_point_y,
+                    &mut self.bn_ctx,
+                )
+                .unwrap();
+            println!(
+                "c_Gamma-x: 0x{}",
+                c_gamma_point_x.to_hex_str().unwrap().to_lowercase()
+            );
+            println!(
+                "c_Gamma-y: 0x{}",
+                c_gamma_point_y.to_hex_str().unwrap().to_lowercase()
+            );
+        }
+
         c_gamma.invert(&self.group, &self.bn_ctx)?;
         v_point.add(&self.group, &s_h, &c_gamma, &mut self.bn_ctx)?;
 
